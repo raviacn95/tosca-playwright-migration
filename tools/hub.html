@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Tosca import &amp; report hub</title>
+  <style>
+    :root { --bg:#0f172a; --panel:#111827; --card:#1e293b; --line:#334155; --text:#e2e8f0; --muted:#94a3b8; --accent:#38bdf8; --ok:#16a34a; --bad:#dc2626; --manual:#a78bfa; }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { margin: 0; font-family: Segoe UI, Arial, sans-serif; background: var(--bg); color: var(--text); display: grid; grid-template-rows: 56px 1fr; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 0 20px; border-bottom: 1px solid var(--line); background: var(--panel); }
+    header h1 { font-size: 16px; margin: 0; }
+    header span { color: var(--muted); font-size: 13px; }
+    .layout { display: grid; grid-template-columns: 380px 1fr; min-height: 0; }
+    aside { border-right: 1px solid var(--line); padding: 16px; overflow: auto; background: var(--panel); }
+    section.report { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+    .drop { border: 2px dashed var(--line); border-radius: 10px; padding: 28px 16px; text-align: center; color: var(--muted); cursor: pointer; background: var(--card); }
+    .drop.drag { border-color: var(--accent); color: var(--accent); }
+    .drop strong { display: block; color: var(--text); margin-bottom: 6px; }
+    input[type=file] { display: none; }
+    .actions { display: flex; gap: 8px; margin: 12px 0 16px; }
+    button { background: var(--accent); color: #0f172a; border: 0; border-radius: 6px; padding: 8px 12px; font-weight: 700; cursor: pointer; }
+    button.secondary { background: transparent; color: var(--text); border: 1px solid var(--line); }
+    button:disabled { opacity: 0.5; cursor: wait; }
+    .status { font-size: 13px; color: var(--muted); min-height: 18px; margin-bottom: 12px; white-space: pre-wrap; }
+    .status.ok { color: var(--ok); }
+    .status.bad { color: var(--bad); }
+    h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 8px 0; }
+    .file { display: flex; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; font-size: 13px; }
+    .file small { color: var(--muted); }
+    .tabs { display: flex; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+    .tabs button { background: transparent; color: var(--muted); border: 1px solid transparent; }
+    .tabs button.active { color: var(--text); border-color: var(--line); background: var(--card); }
+    iframe { flex: 1; width: 100%; border: 0; background: #fff; }
+    .empty { padding: 40px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Tosca import &amp; report hub</h1>
+    <span>Upload .tsu and view Jira / Allure reports in one place</span>
+  </header>
+  <div class="layout">
+    <aside>
+      <label class="drop" id="drop">
+        <strong>Upload .tsu file</strong>
+        Drop a file here or click to browse
+        <input id="file" type="file" accept=".tsu"/>
+      </label>
+      <div class="actions">
+        <button id="convert">Convert all</button>
+        <button class="secondary" id="refresh">Refresh</button>
+      </div>
+      <div class="status" id="status">Ready. Files save to imports/tsu.</div>
+      <h2>Imported files</h2>
+      <div id="files"></div>
+    </aside>
+    <section class="report">
+      <div class="tabs">
+        <button class="active" data-src="/reports/manual-catalog.html">Jira test cases</button>
+        <button data-src="/allure/index.html">Allure report</button>
+      </div>
+      <iframe id="frame" title="Report" src="/reports/manual-catalog.html"></iframe>
+    </section>
+  </div>
+  <script>
+    const statusEl = document.getElementById('status');
+    const filesEl = document.getElementById('files');
+    const frame = document.getElementById('frame');
+    const drop = document.getElementById('drop');
+    const fileInput = document.getElementById('file');
+
+    function setStatus(text, kind) {
+      statusEl.textContent = text;
+      statusEl.className = 'status' + (kind ? ' ' + kind : '');
+    }
+
+    async function loadFiles() {
+      const res = await fetch('/api/status');
+      const data = await res.json();
+      filesEl.innerHTML = data.files.length
+        ? data.files.map(f => `<div class="file"><div>${f.name}<small><br>${f.size} · ${f.modified}</small></div></div>`).join('')
+        : '<div class="empty">No .tsu files yet. Upload one to get started.</div>';
+    }
+
+    function reloadReport() {
+      frame.src = frame.src.split('?')[0] + '?t=' + Date.now();
+    }
+
+    async function upload(file) {
+      if (!file || !file.name.toLowerCase().endsWith('.tsu')) {
+        setStatus('Please choose a .tsu file.', 'bad');
+        return;
+      }
+      setStatus('Uploading and converting ' + file.name + ' …');
+      const body = new FormData();
+      body.append('file', file);
+      const res = await fetch('/api/upload', { method: 'POST', body });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        setStatus(data.error || 'Upload failed', 'bad');
+        return;
+      }
+      setStatus('Converted ' + file.name + '. Reports updated.', 'ok');
+      await loadFiles();
+      reloadReport();
+    }
+
+    async function convertAll() {
+      setStatus('Converting all files in imports/tsu …');
+      document.getElementById('convert').disabled = true;
+      const res = await fetch('/api/convert', { method: 'POST' });
+      const data = await res.json();
+      document.getElementById('convert').disabled = false;
+      if (!res.ok || data.error) {
+        setStatus(data.error || 'Convert failed', 'bad');
+        return;
+      }
+      setStatus(data.message || 'Reports updated.', 'ok');
+      await loadFiles();
+      reloadReport();
+    }
+
+    drop.addEventListener('click', () => fileInput.click());
+    drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('drag'); });
+    drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
+    drop.addEventListener('drop', (e) => {
+      e.preventDefault();
+      drop.classList.remove('drag');
+      if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files[0]) upload(fileInput.files[0]);
+      fileInput.value = '';
+    });
+    document.getElementById('convert').addEventListener('click', convertAll);
+    document.getElementById('refresh').addEventListener('click', async () => {
+      await loadFiles();
+      reloadReport();
+    });
+    document.querySelectorAll('.tabs button').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tabs button').forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        frame.src = btn.dataset.src + '?t=' + Date.now();
+      });
+    });
+    loadFiles();
+  </script>
+</body>
+</html>

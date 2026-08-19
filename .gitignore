@@ -1,0 +1,17 @@
+node_modules/
+__pycache__/
+.venv/
+.env
+.env.*
+test-results/
+playwright-report/
+reports/
+allure-results/
+allure-report/
+*.tsu
+tests/generated/*.spec.ts
+tests/generated/mapped/
+*.mapped.json
+_tsu_analysis/
+.DS_Store
+*.log

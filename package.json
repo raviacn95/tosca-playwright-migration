@@ -1,0 +1,25 @@
+{
+  "name": "tosca-playwright-migration",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "convert": "python tools/tsu_to_playwright.py",
+    "convert:all": "python tools/tsu_to_playwright.py imports/tsu",
+    "test": "playwright test",
+    "test:generated": "playwright test tests/generated",
+    "allure:generate": "allure generate allure-results --clean -o allure-report",
+    "allure:open": "allure open allure-report",
+    "hub": "python tools/hub.py",
+    "start": "python tools/hub.py"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@types/node": "^22.10.0",
+    "allure-commandline": "^2.34.1",
+    "allure-playwright": "^3.4.1",
+    "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "xlsx": "^0.18.5"
+  }
+}

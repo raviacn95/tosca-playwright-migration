@@ -1,0 +1,8 @@
+{
+  "tsuImportDir": "imports/tsu",
+  "excelDataDir": "data",
+  "generatedTestsDir": "tests/generated",
+  "allureResultsDir": "allure-results",
+  "reportsDir": "reports",
+  "hubPort": 8765
+}
