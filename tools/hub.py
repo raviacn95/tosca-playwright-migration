@@ -20,11 +20,55 @@ from urllib.parse import unquote, urlparse
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).parent))
 from project_paths import collect_tsu_files, load_config, tsu_import_dir  # noqa: E402
-from manual_report import write_empty_catalog  # noqa: E402
+from manual_report import render_catalog_html, write_empty_catalog  # noqa: E402
+
+EMPTY_ALLURE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Allure report</title>
+  <style>
+    body { margin:0; font-family: Segoe UI, Arial, sans-serif; background:#0f172a; color:#e2e8f0; }
+    .placeholder { padding:40px 28px; color:#94a3b8; line-height:1.6; }
+    h3 { color:#e2e8f0; margin:0 0 8px; font-size:18px; }
+  </style>
+</head>
+<body>
+  <div class="placeholder">
+    <h3>Allure report</h3>
+    <p>No Allure report yet. Upload a .tsu file or click Convert all to generate one.</p>
+  </div>
+</body>
+</html>
+"""
+
+
+def _empty_catalog() -> dict:
+    return {"generatedAt": "", "testCases": [], "count": 0}
+
+
+def write_empty_allure_if_missing() -> None:
+    dest = ROOT / "allure-report" / "index.html"
+    if dest.exists():
+        return
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(EMPTY_ALLURE, encoding="utf-8")
+
 
 HUB_HTML = Path(__file__).with_name("hub.html")
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("TOSCA_HUB_PORT") or load_config().get("hubPort") or 8765)
+
+
+def _allure_ready() -> bool:
+    return (ROOT / "allure-report" / "widgets" / "summary.json").exists()
+
+
+def _cors(handler: BaseHTTPRequestHandler) -> None:
+    handler.send_header("Access-Control-Allow-Origin", "*")
+    handler.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+    handler.send_header("Access-Control-Allow-Headers", "Content-Type")
+    handler.send_header("Access-Control-Max-Age", "86400")
 
 
 def _safe_under(root: Path, rel: str) -> Path | None:
@@ -70,6 +114,7 @@ def _run_convert() -> tuple[bool, str]:
     extra = ""
     if allure.returncode != 0:
         extra = " Jira catalog updated; Allure HTML could not be rebuilt."
+        write_empty_allure_if_missing()
     return True, "Conversion complete. Reports are ready." + extra
 
 
@@ -105,6 +150,7 @@ class HubHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))
         self.send_header("Cache-Control", "no-store")
+        _cors(self)
         self.end_headers()
         self.wfile.write(raw)
 
@@ -115,6 +161,7 @@ class HubHandler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(raw)))
+                _cors(self)
                 self.end_headers()
                 self.wfile.write(raw)
                 return
@@ -136,8 +183,14 @@ class HubHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", types.get(suffix, "application/octet-stream"))
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
+        _cors(self)
         self.end_headers()
         self.wfile.write(data)
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        _cors(self)
+        self.end_headers()
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -146,35 +199,36 @@ class HubHandler(BaseHTTPRequestHandler):
             self._send_file(HUB_HTML)
             return
         if path == "/api/status":
-            allure_ok = (ROOT / "allure-report" / "index.html").exists()
-            catalog_ok = (ROOT / "reports" / "manual-catalog.html").exists()
             self._json(200, {
                 "files": _file_list(),
                 "importDir": str(tsu_import_dir()),
-                "allure": allure_ok,
-                "catalog": catalog_ok,
+                "allure": _allure_ready(),
+                "catalog": (ROOT / "reports" / "manual-catalog.json").exists(),
             })
+            return
+        if path == "/api/catalog":
+            catalog_path = ROOT / "reports" / "manual-catalog.json"
+            data = _empty_catalog()
+            if catalog_path.exists():
+                try:
+                    loaded = json.loads(catalog_path.read_text(encoding="utf-8"))
+                    if isinstance(loaded, dict):
+                        data = loaded
+                except Exception:
+                    pass
+            self._json(200, data)
             return
         if path.startswith("/reports/"):
             target = _safe_under(ROOT / "reports", path[len("/reports/"):])
-            missing = (
-                "<html><body style='font-family:Segoe UI;padding:24px'>"
-                "<p>No converted test cases yet. Upload a .tsu file or click Convert all.</p>"
-                "</body></html>"
-            )
             if target:
-                self._send_file(target, fallback_html=missing if target.name == "manual-catalog.html" else None)
+                fallback = HUB_HTML.read_text(encoding="utf-8") if target.name == "manual-catalog.html" else None
+                self._send_file(target, fallback_html=fallback)
                 return
         if path.startswith("/allure"):
             rel = path[len("/allure"):].lstrip("/") or "index.html"
             target = _safe_under(ROOT / "allure-report", rel)
-            missing = (
-                "<html><body style='font-family:Segoe UI;padding:24px'>"
-                "<p>Allure report is not generated yet. Upload a .tsu file or click Convert all.</p>"
-                "</body></html>"
-            )
             if target:
-                self._send_file(target, fallback_html=missing if rel == "index.html" else None)
+                self._send_file(target, fallback_html=EMPTY_ALLURE if rel == "index.html" else None)
                 return
         self.send_error(404, "Not found")
 
@@ -213,9 +267,13 @@ class HubHandler(BaseHTTPRequestHandler):
 
 def main() -> int:
     tsu_import_dir()
-    catalog = ROOT / "reports" / "manual-catalog.html"
-    if not catalog.exists():
+    reports = ROOT / "reports"
+    reports.mkdir(parents=True, exist_ok=True)
+    if not (reports / "manual-catalog.json").exists():
         write_empty_catalog()
+    else:
+        render_catalog_html({}, reports / "manual-catalog.html")
+    write_empty_allure_if_missing()
     server = ThreadingHTTPServer((HOST, PORT), HubHandler)
     url = f"http://{HOST}:{PORT}/"
     print(f"Hub running at {url}")

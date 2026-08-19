@@ -257,83 +257,13 @@ def _render_step_html(node: dict, n=1) -> str:
     )
 
 
-def render_catalog_html(catalog: dict, out_html: Path) -> Path:
-    cases = catalog.get("testCases") or []
-    nav = []
-    panels = []
-    for i, case in enumerate(cases):
-        active = " active" if i == 0 else ""
-        nav.append(
-            f"<button class='nav-item{active}' data-id='{escape(str(case.get('id')))}'>"
-            f"<span class='badge'>Manual</span>"
-            f"<strong>{escape(case.get('name') or '')}</strong>"
-            f"<small>{escape(case.get('folder') or '')}</small></button>"
-        )
-        jira = case.get("jira") or {}
-        pre = "".join(f"<li>{escape(x)}</li>" for x in jira.get("preConditions") or [])
-        steps_ol = "".join(f"<li>{escape(x)}</li>" for x in jira.get("steps") or [])
-        exp = "".join(f"<li>{escape(x)}</li>" for x in jira.get("expectedResults") or [])
-        post = "".join(f"<li>{escape(x)}</li>" for x in jira.get("postConditions") or [])
-        hidden = "" if i == 0 else " hidden"
-        panels.append(
-            f"<article class='panel{hidden}' id='case-{escape(str(case.get('id')))}'>"
-            f"<h2>Test Case: {escape(jira.get('title') or case.get('name') or '')}</h2>"
-            f"<p class='meta'>{escape(case.get('folder') or '')}</p>"
-            f"<p class='objective'><strong>Objective:</strong> {escape(jira.get('objective') or '')}</p>"
-            f"<h3>Pre-Condition</h3><ul>{pre}</ul>"
-            f"<h3>Steps</h3><p class='note'>Repeat data-driven steps for each Excel row when this case uses a data file.</p><ol>{steps_ol}</ol>"
-            f"<h3>Expected Result</h3><ul>{exp}</ul>"
-            f"<h3>Post-Condition</h3><ul>{post}</ul>"
-            f"</article>"
-        )
+HUB_PAGE = Path(__file__).with_name("hub.html")
 
-    html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"/>
-  <title>Manual test catalog — Tosca conversions</title>
-  <style>
-    :root {{ --bg:#0f172a; --panel:#111827; --card:#1e293b; --line:#334155; --text:#e2e8f0; --muted:#94a3b8; --accent:#38bdf8; --manual:#a78bfa; }}
-    * {{ box-sizing: border-box; }}
-    body {{ margin:0; font-family: Segoe UI, Arial, sans-serif; background:var(--bg); color:var(--text); display:flex; min-height:100vh; }}
-    aside {{ width:320px; background:var(--panel); border-right:1px solid var(--line); padding:16px; overflow:auto; }}
-    main {{ flex:1; padding:28px 36px; overflow:auto; }}
-    h1 {{ font-size:18px; margin:0 0 12px; }}
-    .count {{ color:var(--muted); margin-bottom:16px; }}
-    .nav-item {{ display:block; width:100%; text-align:left; background:transparent; border:1px solid var(--line); color:var(--text); padding:10px 12px; margin:0 0 8px; border-radius:8px; cursor:pointer; }}
-    .nav-item.active, .nav-item:hover {{ border-color:var(--accent); }}
-    .nav-item small {{ display:block; color:var(--muted); }}
-    h3 {{ margin-top: 24px; }}
-    ul, ol {{ line-height: 1.6; }}
-    .objective, .note, .meta {{ color:var(--muted); }}
-    .badge {{ display:inline-block; background:var(--manual); color:#1e1b4b; font-size:11px; font-weight:700; padding:2px 6px; border-radius:999px; margin-bottom:4px; }}
-    .panel[hidden] {{ display:none; }}
-  </style>
-</head>
-<body>
-  <aside>
-    <h1>Manual test cases</h1>
-    <div class="count">{catalog.get("count") or len(cases)} converted from Tosca · {escape(catalog.get("generatedAt") or "")}</div>
-    {''.join(nav)}
-  </aside>
-  <main>
-    {''.join(panels) if panels else "<p>No converted test cases yet. Upload a .tsu file on the hub or run <code>npm run convert</code>.</p>"}
-  </main>
-  <script>
-    document.querySelectorAll('.nav-item').forEach(btn => {{
-      btn.addEventListener('click', () => {{
-        document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        document.querySelectorAll('.panel').forEach(p => p.hidden = true);
-        const el = document.getElementById('case-' + btn.dataset.id);
-        if (el) el.hidden = false;
-      }});
-    }});
-  </script>
-</body>
-</html>"""
+
+def render_catalog_html(catalog: dict, out_html: Path) -> Path:
+    """Write the hub page (upload + Jira + Allure) next to the catalog JSON."""
     out_html.parent.mkdir(parents=True, exist_ok=True)
-    out_html.write_text(html, encoding="utf-8")
+    out_html.write_text(HUB_PAGE.read_text(encoding="utf-8"), encoding="utf-8")
     return out_html
 
 

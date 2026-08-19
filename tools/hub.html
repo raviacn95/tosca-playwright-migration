@@ -14,7 +14,7 @@
     .layout { display: grid; grid-template-columns: 380px 1fr; min-height: 0; }
     aside { border-right: 1px solid var(--line); padding: 16px; overflow: auto; background: var(--panel); }
     section.report { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-    .drop { border: 2px dashed var(--line); border-radius: 10px; padding: 28px 16px; text-align: center; color: var(--muted); cursor: pointer; background: var(--card); }
+    .drop { border: 2px dashed var(--line); border-radius: 10px; padding: 28px 16px; text-align: center; color: var(--muted); cursor: pointer; background: var(--card); display: block; }
     .drop.drag { border-color: var(--accent); color: var(--accent); }
     .drop strong { display: block; color: var(--text); margin-bottom: 6px; }
     input[type=file] { display: none; }
@@ -26,13 +26,22 @@
     .status.ok { color: var(--ok); }
     .status.bad { color: var(--bad); }
     h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 8px 0; }
-    .file { display: flex; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; font-size: 13px; }
-    .file small { color: var(--muted); }
+    .file, .nav-item { display: block; width: 100%; text-align: left; background: transparent; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; font-size: 13px; cursor: pointer; }
+    .nav-item.active, .nav-item:hover, .file:hover { border-color: var(--accent); }
+    .file small, .nav-item small { display: block; color: var(--muted); }
     .tabs { display: flex; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
     .tabs button { background: transparent; color: var(--muted); border: 1px solid transparent; }
     .tabs button.active { color: var(--text); border-color: var(--line); background: var(--card); }
+    .pane { flex: 1; min-height: 0; display: none; flex-direction: column; overflow: auto; }
+    .pane.active { display: flex; }
+    .pane-body { flex: 1; padding: 28px 36px; overflow: auto; }
     iframe { flex: 1; width: 100%; border: 0; background: #fff; }
-    .empty { padding: 40px; color: var(--muted); }
+    .empty, .placeholder { padding: 40px 28px; color: var(--muted); line-height: 1.6; }
+    .placeholder h3 { color: var(--text); margin: 0 0 8px; font-size: 18px; }
+    .badge { display: inline-block; background: var(--manual); color: #1e1b4b; font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 999px; margin-bottom: 4px; }
+    .objective, .note, .meta { color: var(--muted); }
+    ul, ol { line-height: 1.6; }
+    code { font-family: Consolas, monospace; }
   </style>
 </head>
 <body>
@@ -51,40 +60,138 @@
         <button id="convert">Convert all</button>
         <button class="secondary" id="refresh">Refresh</button>
       </div>
-      <div class="status" id="status">Ready. Files save to imports/tsu.</div>
+      <div class="status" id="status">Ready. Upload a .tsu file or click Convert all.</div>
       <h2>Imported files</h2>
       <div id="files"></div>
+      <h2>Manual test cases</h2>
+      <div id="cases"></div>
     </aside>
     <section class="report">
       <div class="tabs">
-        <button class="active" data-src="/reports/manual-catalog.html">Jira test cases</button>
-        <button data-src="/allure/index.html">Allure report</button>
+        <button class="active" data-pane="jira">Jira test cases</button>
+        <button data-pane="allure">Allure report</button>
       </div>
-      <iframe id="frame" title="Report" src="/reports/manual-catalog.html"></iframe>
+      <div class="pane active" id="pane-jira">
+        <div class="pane-body" id="jira-body"></div>
+      </div>
+      <div class="pane" id="pane-allure">
+        <div class="placeholder" id="allure-empty">
+          <h3>Allure report</h3>
+          <p>No Allure report yet. Upload a .tsu file or click Convert all to generate one. The Allure tab stays available even when the catalog is empty.</p>
+        </div>
+        <iframe id="allure-frame" title="Allure report" hidden></iframe>
+      </div>
     </section>
   </div>
   <script>
+    const HUB = location.protocol === 'file:' ? 'http://127.0.0.1:8765' : '';
     const statusEl = document.getElementById('status');
     const filesEl = document.getElementById('files');
-    const frame = document.getElementById('frame');
+    const casesEl = document.getElementById('cases');
+    const jiraBody = document.getElementById('jira-body');
     const drop = document.getElementById('drop');
     const fileInput = document.getElementById('file');
+    const allureEmpty = document.getElementById('allure-empty');
+    const allureFrame = document.getElementById('allure-frame');
+    let catalog = { testCases: [], count: 0 };
+
+    function esc(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
 
     function setStatus(text, kind) {
       statusEl.textContent = text;
       statusEl.className = 'status' + (kind ? ' ' + kind : '');
     }
 
-    async function loadFiles() {
-      const res = await fetch('/api/status');
-      const data = await res.json();
-      filesEl.innerHTML = data.files.length
-        ? data.files.map(f => `<div class="file"><div>${f.name}<small><br>${f.size} · ${f.modified}</small></div></div>`).join('')
-        : '<div class="empty">No .tsu files yet. Upload one to get started.</div>';
+    function hubDownMessage() {
+      return 'Start the hub with npm start, then upload from this page (http://127.0.0.1:8765).';
     }
 
-    function reloadReport() {
-      frame.src = frame.src.split('?')[0] + '?t=' + Date.now();
+    async function api(path, options) {
+      const res = await fetch(HUB + path, options);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || res.statusText || 'Request failed');
+      return data;
+    }
+
+    function renderFiles(files) {
+      filesEl.innerHTML = files && files.length
+        ? files.map((f) => `<div class="file"><div>${esc(f.name)}<small>${esc(f.size)} · ${esc(f.modified)}</small></div></div>`).join('')
+        : '<div class="empty">No .tsu files yet. Use Upload above — this control is always available.</div>';
+    }
+
+    function renderCase(caseItem) {
+      if (!caseItem) {
+        jiraBody.innerHTML = '<div class="placeholder"><h3>Jira test cases</h3><p>No converted test cases yet. Upload a .tsu file or click Convert all. Upload and Allure stay available while this list is empty.</p></div>';
+        return;
+      }
+      const jira = caseItem.jira || {};
+      const list = (items) => (items || []).map((x) => `<li>${esc(x)}</li>`).join('');
+      jiraBody.innerHTML = `
+        <h2>Test Case: ${esc(jira.title || caseItem.name || '')}</h2>
+        <p class="meta">${esc(caseItem.folder || '')}</p>
+        <p class="objective"><strong>Objective:</strong> ${esc(jira.objective || '')}</p>
+        <h3>Pre-Condition</h3><ul>${list(jira.preConditions)}</ul>
+        <h3>Steps</h3><p class="note">Repeat data-driven steps for each Excel row when this case uses a data file.</p>
+        <ol>${list(jira.steps)}</ol>
+        <h3>Expected Result</h3><ul>${list(jira.expectedResults)}</ul>
+        <h3>Post-Condition</h3><ul>${list(jira.postConditions)}</ul>`;
+    }
+
+    function renderCases() {
+      const cases = catalog.testCases || [];
+      casesEl.innerHTML = cases.length
+        ? cases.map((c, i) => `
+            <button class="nav-item${i === 0 ? ' active' : ''}" data-id="${esc(c.id)}">
+              <span class="badge">Manual</span>
+              <strong>${esc(c.name || '')}</strong>
+              <small>${esc(c.folder || '')}</small>
+            </button>`).join('')
+        : `<div class="empty">${catalog.count || 0} converted from Tosca. Upload a .tsu file to add cases.</div>`;
+      casesEl.querySelectorAll('.nav-item').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          casesEl.querySelectorAll('.nav-item').forEach((b) => b.classList.remove('active'));
+          btn.classList.add('active');
+          renderCase((catalog.testCases || []).find((c) => String(c.id) === String(btn.dataset.id)));
+        });
+      });
+      renderCase(cases[0]);
+    }
+
+    function showAllure(hasReport) {
+      if (hasReport) {
+        allureEmpty.hidden = true;
+        allureFrame.hidden = false;
+        allureFrame.src = HUB + '/allure/index.html?t=' + Date.now();
+      } else {
+        allureFrame.hidden = true;
+        allureFrame.removeAttribute('src');
+        allureEmpty.hidden = false;
+      }
+    }
+
+    async function refresh() {
+      try {
+        const status = await api('/api/status');
+        renderFiles(status.files || []);
+        showAllure(Boolean(status.allure));
+        catalog = await api('/api/catalog');
+        renderCases();
+        if (!statusEl.classList.contains('ok') && !statusEl.classList.contains('bad')) {
+          setStatus('Ready. Upload a .tsu file or click Convert all.');
+        }
+      } catch (err) {
+        renderFiles([]);
+        showAllure(false);
+        catalog = { testCases: [], count: 0 };
+        renderCases();
+        setStatus(hubDownMessage(), 'bad');
+      }
     }
 
     async function upload(file) {
@@ -95,30 +202,27 @@
       setStatus('Uploading and converting ' + file.name + ' …');
       const body = new FormData();
       body.append('file', file);
-      const res = await fetch('/api/upload', { method: 'POST', body });
-      const data = await res.json();
-      if (!res.ok || data.error) {
-        setStatus(data.error || 'Upload failed', 'bad');
-        return;
+      try {
+        const data = await api('/api/upload', { method: 'POST', body });
+        setStatus(data.message || ('Converted ' + file.name + '. Reports updated.'), 'ok');
+        await refresh();
+      } catch (err) {
+        setStatus(err.message || hubDownMessage(), 'bad');
       }
-      setStatus('Converted ' + file.name + '. Reports updated.', 'ok');
-      await loadFiles();
-      reloadReport();
     }
 
     async function convertAll() {
       setStatus('Converting all files in imports/tsu …');
       document.getElementById('convert').disabled = true;
-      const res = await fetch('/api/convert', { method: 'POST' });
-      const data = await res.json();
-      document.getElementById('convert').disabled = false;
-      if (!res.ok || data.error) {
-        setStatus(data.error || 'Convert failed', 'bad');
-        return;
+      try {
+        const data = await api('/api/convert', { method: 'POST' });
+        setStatus(data.message || 'Reports updated.', 'ok');
+        await refresh();
+      } catch (err) {
+        setStatus(err.message || hubDownMessage(), 'bad');
+      } finally {
+        document.getElementById('convert').disabled = false;
       }
-      setStatus(data.message || 'Reports updated.', 'ok');
-      await loadFiles();
-      reloadReport();
     }
 
     drop.addEventListener('click', () => fileInput.click());
@@ -134,18 +238,19 @@
       fileInput.value = '';
     });
     document.getElementById('convert').addEventListener('click', convertAll);
-    document.getElementById('refresh').addEventListener('click', async () => {
-      await loadFiles();
-      reloadReport();
-    });
+    document.getElementById('refresh').addEventListener('click', refresh);
     document.querySelectorAll('.tabs button').forEach((btn) => {
       btn.addEventListener('click', () => {
         document.querySelectorAll('.tabs button').forEach((b) => b.classList.remove('active'));
+        document.querySelectorAll('.pane').forEach((p) => p.classList.remove('active'));
         btn.classList.add('active');
-        frame.src = btn.dataset.src + '?t=' + Date.now();
+        document.getElementById('pane-' + btn.dataset.pane).classList.add('active');
       });
     });
-    loadFiles();
+    renderFiles([]);
+    renderCases();
+    showAllure(false);
+    refresh();
   </script>
 </body>
 </html>
