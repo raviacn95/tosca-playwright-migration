@@ -1,6 +1,8 @@
 # Tosca to Playwright migration hub
 
-Generic converter for Tosca `.tsu` exports. It produces Playwright specs, Jira-style manuals, and Allure results without shipping any application-specific test data.
+Open-source, vendor-neutral toolkit for converting Tosca `.tsu` exports into Playwright tests, Jira-style manual cases, and Allure results.
+
+Any organization may use, copy, modify, and distribute this software under the [MIT License](LICENSE). It is not affiliated with, endorsed by, or sponsored by the owners of Tosca, Playwright, Jira, Allure, or any other product named here.
 
 ## Setup
 
@@ -9,9 +11,11 @@ npm install
 npx playwright install chromium
 ```
 
-Python 3 is required for the converter and hub.
+Python 3 is required for the converter and local hub.
 
 ## Import and convert
+
+Keep customer exports on your machine. `.tsu` files, generated specs, and reports are gitignored and must not be committed.
 
 1. Drop `.tsu` files into `imports/tsu`, or start the hub and upload them there:
 
@@ -19,7 +23,7 @@ Python 3 is required for the converter and hub.
    npm start
    ```
 
-   Hub: `http://127.0.0.1:8765`
+   The hub listens on `http://127.0.0.1:8765` (localhost only).
 
 2. Convert from the hub (**Convert all**) or the CLI:
 
@@ -35,7 +39,16 @@ npm run allure:generate
 npm run allure:open
 ```
 
-Override the Excel file with `TOSCA_EXCEL` if needed. Sample columns live in `data/Users.xlsx`.
+Optional environment variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `TOSCA_EXCEL` | Path to the Excel data file (default `data/Users.xlsx`) |
+| `APP_URL` | Overrides the application URL from the Tosca export |
+| `TOSCA_TSU_DIR` | Alternate import folder |
+| `TOSCA_HUB_PORT` | Hub port (default `8765`) |
+
+Sample columns live in `data/Users.xlsx` (`user01` / `user02`). Replace them with your own test data.
 
 ## Layout
 
@@ -46,3 +59,9 @@ Override the Excel file with `TOSCA_EXCEL` if needed. Sample columns live in `da
 | `src/reporting/` | Playwright step reporter (JSON + HTML) |
 | `tests/generated/` | Generated specs (not committed) |
 | `reports/` | Manual catalog and run reports (not committed) |
+
+## License
+
+MIT. Free for commercial and non-commercial use, including internal enterprise use.
+
+Product names mentioned in this project are trademarks of their respective owners.

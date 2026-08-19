@@ -2,6 +2,20 @@
   "name": "tosca-playwright-migration",
   "version": "1.0.0",
   "private": true,
+  "license": "MIT",
+  "description": "Vendor-neutral converter from Tosca .tsu exports to Playwright tests, Jira-style manuals, and Allure reports.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/raviacn95/tosca-playwright-migration.git"
+  },
+  "keywords": [
+    "tosca",
+    "playwright",
+    "allure",
+    "jira",
+    "test-automation",
+    "migration"
+  ],
   "scripts": {
     "convert": "python tools/tsu_to_playwright.py",
     "convert:all": "python tools/tsu_to_playwright.py imports/tsu",

@@ -642,6 +642,7 @@ import {{ ToscaReporter }} from '{import_prefix}/reporting/toscaReporter';
 
 // Generated from {Path(self.tsu_path).name}
 const config = {tcp_js} as Record<string, string>;
+if (process.env.APP_URL) config.Url = process.env.APP_URL;
 const excelPath = process.env.TOSCA_EXCEL || {js_str(excel_default)};
 
 type UserRow = {{ Username?: string; Password?: string; NewPassword?: string; [k: string]: unknown }};
