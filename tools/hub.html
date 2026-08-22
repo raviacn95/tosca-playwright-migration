@@ -175,22 +175,62 @@
       }
     }
 
+    let lastSyncAt = 0;
+
+    function applySnapshot(payload) {
+      const status = payload.status || payload;
+      catalog = payload.catalog || { testCases: [], count: 0 };
+      renderFiles(status.files || []);
+      showAllure(Boolean(status.allure));
+      renderCases();
+      const files = (status.files || []).length;
+      const specs = status.specCount != null ? status.specCount : (status.specs || []).length;
+      const specNames = (status.specs || []).join(', ');
+      if (files && specs) {
+        setStatus(`${files} imported .tsu → ${specs} Playwright spec${specs === 1 ? '' : 's'} in tests/generated${specNames ? ` (${specNames})` : ''}.`, 'ok');
+      } else if (files) {
+        setStatus(`${files} imported .tsu file${files === 1 ? '' : 's'}. Convert all to generate .ts specs.`, 'ok');
+      } else {
+        setStatus('Ready. Upload a .tsu file here. Files save to imports/tsu and convert to tests/generated.');
+      }
+    }
+
     async function refresh() {
       try {
         const status = await api('/api/status');
-        renderFiles(status.files || []);
-        showAllure(Boolean(status.allure));
-        catalog = await api('/api/catalog');
-        renderCases();
-        if (!statusEl.classList.contains('ok') && !statusEl.classList.contains('bad')) {
-          setStatus('Ready. Upload a .tsu file or click Convert all.');
+        let nextCatalog = { testCases: [], count: 0 };
+        try {
+          nextCatalog = await api('/api/catalog');
+        } catch {
+          nextCatalog = { testCases: [], count: 0 };
         }
+        applySnapshot({ status, catalog: nextCatalog });
       } catch (err) {
         renderFiles([]);
         showAllure(false);
         catalog = { testCases: [], count: 0 };
         renderCases();
-        setStatus(hubDownMessage(), 'bad');
+        const onHub = location.hostname === '127.0.0.1' || location.hostname === 'localhost';
+        setStatus(onHub ? `Could not load hub status: ${err.message}` : hubDownMessage(), 'bad');
+      }
+    }
+
+    async function syncNow(force) {
+      const now = Date.now();
+      if (!force && now - lastSyncAt < 3000) {
+        await refresh();
+        return;
+      }
+      setStatus('Refreshing imports and generating Playwright .ts files …');
+      try {
+        const data = await api('/api/sync', { method: 'POST' });
+        lastSyncAt = Date.now();
+        applySnapshot(data);
+        if (data.message) setStatus(data.message, 'ok');
+      } catch (err) {
+        await refresh();
+        if (statusEl.classList.contains('bad')) return;
+        setStatus(err.message || hubDownMessage(), 'bad');
       }
     }
 
@@ -204,22 +244,19 @@
       body.append('file', file);
       try {
         const data = await api('/api/upload', { method: 'POST', body });
-        setStatus(data.message || ('Converted ' + file.name + '. Reports updated.'), 'ok');
-        await refresh();
+        lastSyncAt = Date.now();
+        if (data.status) applySnapshot(data);
+        setStatus(data.message || ('Converted ' + file.name + '. Spec overwritten if it already existed.'), 'ok');
+        if (!data.status) await syncNow(true);
       } catch (err) {
         setStatus(err.message || hubDownMessage(), 'bad');
       }
     }
 
     async function convertAll() {
-      setStatus('Converting all files in imports/tsu …');
       document.getElementById('convert').disabled = true;
       try {
-        const data = await api('/api/convert', { method: 'POST' });
-        setStatus(data.message || 'Reports updated.', 'ok');
-        await refresh();
-      } catch (err) {
-        setStatus(err.message || hubDownMessage(), 'bad');
+        await syncNow(true);
       } finally {
         document.getElementById('convert').disabled = false;
       }
@@ -238,7 +275,7 @@
       fileInput.value = '';
     });
     document.getElementById('convert').addEventListener('click', convertAll);
-    document.getElementById('refresh').addEventListener('click', refresh);
+    document.getElementById('refresh').addEventListener('click', () => syncNow(true));
     document.querySelectorAll('.tabs button').forEach((btn) => {
       btn.addEventListener('click', () => {
         document.querySelectorAll('.tabs button').forEach((b) => b.classList.remove('active'));
@@ -250,7 +287,11 @@
     renderFiles([]);
     renderCases();
     showAllure(false);
-    refresh();
+    syncNow(true);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) syncNow(false);
+    });
+    window.addEventListener('focus', () => syncNow(false));
   </script>
 </body>
 </html>

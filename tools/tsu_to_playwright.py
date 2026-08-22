@@ -706,9 +706,21 @@ def relative_import(out_dir: Path) -> str:
     return rel
 
 
-def generate_playwright(mapped: dict, tsu_path: Path, out_dir: Path) -> Path:
+def spec_stem(mapped: dict, tsu_path: Path, used: set[str] | None = None) -> str:
+    base = re.sub(r"[^A-Za-z0-9]+", "_", (mapped.get("testCase") or {}).get("name") or tsu_path.stem).strip("_")
+    base = base or re.sub(r"[^A-Za-z0-9]+", "_", tsu_path.stem).strip("_") or "tosca_test"
+    name = f"{base}.spec.ts"
+    if used is not None and name in used:
+        extra = re.sub(r"[^A-Za-z0-9]+", "_", tsu_path.stem).strip("_")
+        name = f"{base}_{extra}.spec.ts"
+    if used is not None:
+        used.add(name)
+    return name[:-8] if name.endswith(".spec.ts") else name
+
+
+def generate_playwright(mapped: dict, tsu_path: Path, out_dir: Path, dest_stem: str | None = None) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
-    safe = re.sub(r"[^A-Za-z0-9]+", "_", mapped["testCase"]["name"]).strip("_")
+    safe = dest_stem or spec_stem(mapped, tsu_path)
     filename = out_dir / f"{safe}.spec.ts"
     import_prefix = relative_import(out_dir)
     writer = SpecWriter(mapped, tsu_path.name)
@@ -716,23 +728,39 @@ def generate_playwright(mapped: dict, tsu_path: Path, out_dir: Path) -> Path:
     return filename
 
 
+def prune_generated_specs(out_dir: Path, keep_names: set[str]) -> list[Path]:
+    removed = []
+    if not out_dir.is_dir():
+        return removed
+    for path in out_dir.glob("*.spec.ts"):
+        if path.name not in keep_names:
+            path.unlink(missing_ok=True)
+            removed.append(path)
+    return removed
+
+
 def collect_tsu_paths(target: Path) -> list[Path]:
     return collect_tsu_files(target)
 
 
-def convert_one(tsu_path: Path, out_dir: Path, mapped_dir: Path | None = None) -> dict:
+def convert_one(
+    tsu_path: Path,
+    out_dir: Path,
+    mapped_dir: Path | None = None,
+    used_spec_names: set[str] | None = None,
+) -> dict:
     print(f"Loading {tsu_path} ...")
     raw = load_tsu(tsu_path)
     model = ToscaModel(raw["Entities"])
     mapped = map_tree(model, str(tsu_path))
-    spec = generate_playwright(mapped, tsu_path, out_dir)
+    stem = spec_stem(mapped, tsu_path, used_spec_names)
+    spec = generate_playwright(mapped, tsu_path, out_dir, dest_stem=stem)
     published = publish_manual_case(mapped)
     print(f"  Playwright:  {spec}")
     print(f"  Allure:      {published['allure']}")
     if mapped_dir:
         mapped_dir.mkdir(parents=True, exist_ok=True)
-        safe = re.sub(r"[^A-Za-z0-9]+", "_", mapped["testCase"]["name"] or tsu_path.stem).strip("_")
-        mapped_path = mapped_dir / f"{safe}.mapped.json"
+        mapped_path = mapped_dir / f"{stem}.mapped.json"
         mapped_path.write_text(json.dumps(mapped, indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"  Mapped JSON: {mapped_path}")
     return {"mapped": mapped, "spec": spec, "report": published}
@@ -757,17 +785,22 @@ def main(argv=None) -> int:
         return 1
 
     paths = collect_tsu_paths(target)
-    if not paths:
-        print(f"No .tsu files in {target}", file=sys.stderr)
-        print("Copy Tosca exports into imports/tsu (common import location).", file=sys.stderr)
-        return 1
-
     out_dir = Path(args.out) if args.out else generated_tests_dir()
     mapped_dir = out_dir / "mapped" if args.keep_mapped else None
     reset_conversion_outputs()
+    used_spec_names: set[str] = set()
+
+    if not paths:
+        prune_generated_specs(out_dir, used_spec_names)
+        print(f"No .tsu files in {target}")
+        print("Copy Tosca exports into imports/tsu (common import location).")
+        return 0
 
     for tsu_path in paths:
-        convert_one(tsu_path, out_dir, mapped_dir)
+        convert_one(tsu_path, out_dir, mapped_dir, used_spec_names)
+    removed = prune_generated_specs(out_dir, used_spec_names)
+    if removed:
+        print(f"  Removed {len(removed)} leftover generated spec(s)")
 
     catalog = ROOT / "reports" / "manual-catalog.html"
     print(f"\nManual catalog (all test cases): {catalog}")

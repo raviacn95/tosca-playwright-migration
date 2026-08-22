@@ -19,7 +19,7 @@ from urllib.parse import unquote, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).parent))
-from project_paths import collect_tsu_files, load_config, tsu_import_dir  # noqa: E402
+from project_paths import collect_tsu_files, generated_tests_dir, load_config, tsu_import_dir  # noqa: E402
 from manual_report import render_catalog_html, write_empty_catalog  # noqa: E402
 
 EMPTY_ALLURE = """<!DOCTYPE html>
@@ -45,6 +45,36 @@ EMPTY_ALLURE = """<!DOCTYPE html>
 
 def _empty_catalog() -> dict:
     return {"generatedAt": "", "testCases": [], "count": 0}
+
+
+def _catalog_payload() -> dict:
+    catalog_path = ROOT / "reports" / "manual-catalog.json"
+    data = _empty_catalog()
+    if catalog_path.exists():
+        try:
+            loaded = json.loads(catalog_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                return loaded
+        except Exception:
+            pass
+    return data
+
+
+def _status_payload() -> dict:
+    specs = sorted(p.name for p in generated_tests_dir().glob("*.spec.ts"))
+    return {
+        "files": _file_list(),
+        "importDir": str(tsu_import_dir()),
+        "allure": _allure_ready(),
+        "catalog": (ROOT / "reports" / "manual-catalog.json").exists(),
+        "specs": specs,
+        "specCount": len(specs),
+    }
+
+
+def _sync() -> tuple[bool, str, dict]:
+    ok, message = _run_convert()
+    return ok, message, {"status": _status_payload(), "catalog": _catalog_payload()}
 
 
 def write_empty_allure_if_missing() -> None:
@@ -199,24 +229,16 @@ class HubHandler(BaseHTTPRequestHandler):
             self._send_file(HUB_HTML)
             return
         if path == "/api/status":
-            self._json(200, {
-                "files": _file_list(),
-                "importDir": str(tsu_import_dir()),
-                "allure": _allure_ready(),
-                "catalog": (ROOT / "reports" / "manual-catalog.json").exists(),
-            })
+            self._json(200, _status_payload())
             return
         if path == "/api/catalog":
-            catalog_path = ROOT / "reports" / "manual-catalog.json"
-            data = _empty_catalog()
-            if catalog_path.exists():
-                try:
-                    loaded = json.loads(catalog_path.read_text(encoding="utf-8"))
-                    if isinstance(loaded, dict):
-                        data = loaded
-                except Exception:
-                    pass
-            self._json(200, data)
+            self._json(200, _catalog_payload())
+            return
+        if path == "/api/sync":
+            ok, message, payload = _sync()
+            payload["error"] = None if ok else message
+            payload["message"] = message if ok else None
+            self._json(200 if ok else 500, payload)
             return
         if path.startswith("/reports/"):
             target = _safe_under(ROOT / "reports", path[len("/reports/"):])
@@ -250,17 +272,20 @@ class HubHandler(BaseHTTPRequestHandler):
                 return
             dest = tsu_import_dir() / Path(name).name
             dest.write_bytes(payload)
-            ok, message = _run_convert()
-            self._json(200 if ok else 500, {
+            ok, message, snapshot = _sync()
+            snapshot.update({
                 "saved": dest.name,
                 "path": str(dest),
                 "error": None if ok else message,
                 "message": message if ok else None,
             })
+            self._json(200 if ok else 500, snapshot)
             return
-        if parsed.path == "/api/convert":
-            ok, message = _run_convert()
-            self._json(200 if ok else 500, {"error": None if ok else message, "message": message if ok else None})
+        if parsed.path in ("/api/convert", "/api/sync"):
+            ok, message, payload = _sync()
+            payload["error"] = None if ok else message
+            payload["message"] = message if ok else None
+            self._json(200 if ok else 500, payload)
             return
         self.send_error(404, "Not found")
 

@@ -55,14 +55,22 @@ def generated_tests_dir() -> Path:
 
 
 def collect_tsu_files(target: Path | None = None) -> list[Path]:
-    """Find .tsu files. Directories are searched recursively."""
+    """Find .tsu files. Directories are searched recursively. Same filename keeps the newest copy."""
     if target is None:
         target = tsu_import_dir()
     if target.is_file():
         return [target]
-    if target.is_dir():
-        return sorted(p for p in target.rglob("*.tsu") if p.is_file())
-    return []
+    if not target.is_dir():
+        return []
+    newest: dict[str, Path] = {}
+    for path in target.rglob("*.tsu"):
+        if not path.is_file():
+            continue
+        key = path.name.lower()
+        current = newest.get(key)
+        if current is None or path.stat().st_mtime >= current.stat().st_mtime:
+            newest[key] = path
+    return sorted(newest.values(), key=lambda p: p.as_posix().lower())
 
 
 def resolve_tsu_target(raw: str | None) -> Path:
